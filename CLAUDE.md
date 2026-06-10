@@ -5,12 +5,11 @@ Automated Fiverr product pipeline: Research → Create → Edit → QC → Publi
 Runs locally on Kali Linux. Ollama models, no cloud API costs.
 
 ## Stack
-- **Orchestrator**: OpenClaw (agents in `openclaw/agents/`)
-- **Workflows**: n8n (import JSONs from `n8n/workflows/`)
-- **Scraper**: Python Flask on port 5000
-- **Database**: PostgreSQL (CRM + n8n state)
-- **Queue**: Redis
-- **Models**: All via local Ollama on port 11434
+- **Brain**: OpenClaw (`ollama run openclaw`) — orchestrates via chat commands
+- **Pipeline runner**: `pipeline/runner.py` — calls Ollama directly for each stage
+- **Scraper**: Python Flask on port 5000 — Fiverr research + brand asset download
+- **Database**: PostgreSQL (CRM + pipeline state)
+- **Dashboard**: Flask + SocketIO at port 8080
 
 ## Model assignments
 | Agent | Model | Purpose |
@@ -26,65 +25,36 @@ Runs locally on Kali Linux. Ollama models, no cloud API costs.
 
 ## Quick start
 ```bash
-# 1. Fix Ollama binding (run on Kali)
+# 1. Fix Ollama binding
 bash scripts/fix-ollama.sh
 
-# 2. Copy env and start stack
+# 2. Install openclaw brain model
+bash scripts/install-openclaw-model.sh
+
+# 3. Start services (postgres, scraper, dashboard)
 cp .env.example .env
 docker compose up -d
 
-# 3. Import n8n workflows
-# Go to http://localhost:5678 → Workflows → Import from File
-# Import all files in n8n/workflows/
+# 4. Run the pipeline
+python pipeline/runner.py --category ebook
+python pipeline/runner.py --category all
+python pipeline/runner.py --status
 
-# 4. Register OpenClaw agents
-openclaw agents add openclaw/agents/orchestrator/SOUL.md
-openclaw agents add openclaw/agents/researcher/SOUL.md
-openclaw agents add openclaw/agents/creator/SOUL.md
-openclaw agents add openclaw/agents/editor/SOUL.md
-openclaw agents add openclaw/agents/quality-check/SOUL.md
-
-# 5. Start OpenClaw gateway
-openclaw gateway start
-
-# 6. Chat with the orchestrator
-openclaw agents chat orchestrator
-```
-
-## Coding tasks
-For all code changes, OpenClaw should delegate to Claude Code:
-```
-claude -p --dangerously-skip-permissions "<task description>"
+# 5. Or talk to KALI directly
+ollama run openclaw
 ```
 
 ## Key paths
-- `openclaw/openclaw.json` → copy to `~/.openclaw/openclaw.json` on Kali
-- `openclaw/agents/` → SOUL.md configs for each pipeline agent
-- `n8n/workflows/` → Import these into n8n UI
-- `scraper/` → Python Flask scraping service
+- `openclaw/workspace/Modelfile` → defines the openclaw Ollama model
+- `openclaw/agents/` → SOUL.md configs for each agent
+- `pipeline/runner.py` → main pipeline orchestrator
+- `pipeline/agents.py` → model + system prompt definitions
+- `scraper/` → Fiverr scraping service
 - `crm/schema.sql` → PostgreSQL schema
-- `scripts/fix-ollama.sh` → Fixes Ollama binding + writes openclaw.json
+- `scripts/` → setup and fix scripts
 
-## Ollama connection fix
-If you get "connection refused" to Ollama:
-```bash
-# Stop existing process
-pkill ollama
-
-# Start bound to all interfaces
-OLLAMA_HOST=0.0.0.0:11434 ollama serve &
-
-# Test
-curl http://127.0.0.1:11434/api/tags
-
-# Copy config
-cp openclaw/openclaw.json ~/.openclaw/openclaw.json
+## Coding tasks
+Delegate all code changes to Claude Code:
 ```
-
-## Pipeline products
-- eBook writing
-- Workbook / fillable PDF creation  
-- YouTube thumbnail design
-- Logo creation
-- Consulting/coaching service listings
-- Social media graphics
+claude -p --dangerously-skip-permissions "<task description>"
+```
