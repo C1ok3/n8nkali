@@ -1,0 +1,9 @@
+.env
+*.log
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+assets/
+node_modules/
+.n8n/

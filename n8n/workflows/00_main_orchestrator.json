@@ -1,0 +1,297 @@
+{
+  "name": "00 - Main Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily 6am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pipeline/start",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item?.json?.body || {};\nconst categories = body.categories || ['ebook', 'workbook', 'thumbnail', 'logo', 'coaching'];\nconst runId = require('crypto').randomUUID();\nreturn categories.map(cat => ({\n  json: { category: cat, run_id: runId, trigger: 'manual' }\n}));"
+      },
+      "id": "prep-categories",
+      "name": "Prepare Categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const categories = ['ebook', 'workbook', 'thumbnail', 'logo', 'coaching'];\nconst runId = require('crypto').randomUUID();\nreturn categories.map(cat => ({\n  json: { category: cat, run_id: runId, trigger: 'schedule' }\n}));"
+      },
+      "id": "prep-schedule",
+      "name": "Prepare Schedule Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "pipeline_runs",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "stage": "={{ 'research' }}",
+            "status": "={{ 'running' }}",
+            "category": "={{ $json.category }}",
+            "metadata": "={{ JSON.stringify({ run_id: $json.run_id, trigger: $json.trigger }) }}"
+          }
+        }
+      },
+      "id": "log-run-start",
+      "name": "Log Run Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [680, 400],
+      "credentials": {
+        "postgres": { "id": "postgres-creds", "name": "n8nkali DB" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SCRAPER_SERVICE_URL }}/research",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "category", "value": "={{ $json.category }}" },
+            { "name": "max_results", "value": 20 },
+            { "name": "min_rating", "value": 4.8 },
+            { "name": "min_reviews", "value": 50 }
+          ]
+        },
+        "options": { "timeout": 60000 }
+      },
+      "id": "call-researcher",
+      "name": "Call Researcher (Scraper)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OLLAMA_BASE_URL }}/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "deepseek-r1:14b" },
+            { "name": "prompt", "value": "={{ 'You are Scout, a Fiverr market researcher. Analyze this research data and identify the top opportunity for creating a superior product.\\n\\nResearch data:\\n' + JSON.stringify($json.results.slice(0,5)) + '\\n\\nReturn JSON with fields: recommended_product_title, target_gap, differentiation_strategy, suggested_price_usd, key_features (array of 5)' }}" },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "id": "researcher-analysis",
+      "name": "Researcher Analysis (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OLLAMA_BASE_URL }}/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "qwen3.6:latest" },
+            { "name": "prompt", "value": "={{ 'You are Forge, a Fiverr content creator. Create a superior product based on this research analysis:\\n\\n' + $json.response + '\\n\\nProduct category: ' + $('Call Researcher (Scraper)').item.json.category + '\\n\\nReturn a complete JSON product brief with: title, description (600 words), table_of_contents (for ebooks/workbooks, else null), package_tiers (basic/standard/premium with prices), tags (15 keywords), unique_value_proposition' }}" },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        },
+        "options": { "timeout": 180000 }
+      },
+      "id": "creator-agent",
+      "name": "Creator Agent (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OLLAMA_BASE_URL }}/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "qwen2.5-coder:14b" },
+            { "name": "prompt", "value": "={{ 'You are Pixel, an editor and visual specialist. Polish this product brief and generate visual assets:\\n\\n' + $json.response + '\\n\\nReturn JSON with: polished_description, image_prompt (detailed 60-word DALL-E prompt for thumbnail/cover), seo_title (max 80 chars), meta_description (160 chars), formatting_notes' }}" },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "id": "editor-agent",
+      "name": "Editor Agent (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OLLAMA_BASE_URL }}/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "deepseek-r1:14b" },
+            { "name": "prompt", "value": "={{ 'You are Apex, a quality assurance specialist. Score this Fiverr product:\\n\\n' + $json.response + '\\n\\nScore 0-100 on: completeness (25pts), differentiation (25pts), seo (20pts), content_quality (20pts), visual_readiness (10pts).\\n\\nReturn JSON: { decision: PASS|NEEDS_REVISION|REJECT, total_score, breakdown: {completeness,differentiation,seo,content_quality,visual_readiness}, feedback, routing_action }' }}" },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "id": "qc-agent",
+      "name": "QC Agent (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "leftValue": "={{ JSON.parse($json.response).decision }}",
+              "rightValue": "PASS",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "qc-route",
+      "name": "QC Decision Router",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": { "__rl": true, "value": "public", "mode": "list" },
+        "table": { "__rl": true, "value": "publish_queue", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "platform": "fiverr",
+            "status": "queued"
+          }
+        }
+      },
+      "id": "add-to-publish",
+      "name": "Add to Publish Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2220, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-creds", "name": "n8nkali DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": { "__rl": true, "value": "public", "mode": "list" },
+        "table": { "__rl": true, "value": "quality_checks", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "decision": "={{ JSON.parse($json.response).decision }}",
+            "score": "={{ JSON.parse($json.response).total_score }}",
+            "feedback": "={{ JSON.parse($json.response).feedback }}"
+          }
+        }
+      },
+      "id": "log-qc-result",
+      "name": "Log QC Result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2220, 500],
+      "credentials": {
+        "postgres": { "id": "postgres-creds", "name": "n8nkali DB" }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 6am": {
+      "main": [[ { "node": "Prepare Schedule Run", "type": "main", "index": 0 } ]]
+    },
+    "Manual Trigger": {
+      "main": [[ { "node": "Prepare Categories", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Schedule Run": {
+      "main": [[ { "node": "Log Run Start", "type": "main", "index": 0 } ]]
+    },
+    "Prepare Categories": {
+      "main": [[ { "node": "Log Run Start", "type": "main", "index": 0 } ]]
+    },
+    "Log Run Start": {
+      "main": [[ { "node": "Call Researcher (Scraper)", "type": "main", "index": 0 } ]]
+    },
+    "Call Researcher (Scraper)": {
+      "main": [[ { "node": "Researcher Analysis (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "Researcher Analysis (Ollama)": {
+      "main": [[ { "node": "Creator Agent (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "Creator Agent (Ollama)": {
+      "main": [[ { "node": "Editor Agent (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "Editor Agent (Ollama)": {
+      "main": [[ { "node": "QC Agent (Ollama)", "type": "main", "index": 0 } ]]
+    },
+    "QC Agent (Ollama)": {
+      "main": [[ { "node": "QC Decision Router", "type": "main", "index": 0 } ]]
+    },
+    "QC Decision Router": {
+      "main": [
+        [ { "node": "Add to Publish Queue", "type": "main", "index": 0 } ],
+        [ { "node": "Log QC Result", "type": "main", "index": 0 } ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["fiverr", "pipeline", "orchestrator"],
+  "triggerCount": 2,
+  "updatedAt": "2026-06-10T00:00:00.000Z",
+  "versionId": "1"
+}
