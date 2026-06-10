@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>n8nkali — Pipeline Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/static/css/dashboard.css"/>
+</head>
+<body>
+
+<!-- ── Top bar ───────────────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo">n8nkali</span>
+    <span class="tagline">Fiverr Pipeline</span>
+  </div>
+  <div class="topbar-services" id="service-health">
+    <div class="service-dot" id="svc-ollama" title="Ollama"><span class="dot"></span>Ollama</div>
+    <div class="service-dot" id="svc-scraper" title="Scraper"><span class="dot"></span>Scraper</div>
+    <div class="service-dot" id="svc-n8n" title="n8n"><span class="dot"></span>n8n</div>
+    <div class="service-dot" id="svc-db" title="Database"><span class="dot"></span>DB</div>
+  </div>
+  <div class="topbar-right">
+    <button class="btn-run" id="btn-run-all" onclick="runPipeline()">▶ Run Pipeline</button>
+    <select id="run-category" class="select-cat">
+      <option value="all">All Categories</option>
+      <option value="ebook">eBook</option>
+      <option value="workbook">Workbook</option>
+      <option value="thumbnail">Thumbnail</option>
+      <option value="logo">Logo</option>
+      <option value="coaching">Coaching</option>
+    </select>
+  </div>
+</header>
+
+<!-- ── Main layout ───────────────────────────────────────────────────────────── -->
+<div class="layout">
+
+  <!-- ── Left: Pipeline stages ──────────────────────────────────────────────── -->
+  <aside class="sidebar-left">
+    <h3 class="section-title">Pipeline</h3>
+    <div class="stage-list" id="stage-list">
+      <div class="stage" data-stage="research">
+        <div class="stage-icon">🔍</div>
+        <div class="stage-info">
+          <div class="stage-name">Research</div>
+          <div class="stage-model">deepseek-r1:14b</div>
+        </div>
+        <div class="stage-badge" id="badge-research">—</div>
+      </div>
+      <div class="stage-arrow">↓</div>
+      <div class="stage" data-stage="create">
+        <div class="stage-icon">✍️</div>
+        <div class="stage-info">
+          <div class="stage-name">Create</div>
+          <div class="stage-model">qwen3.6:latest</div>
+        </div>
+        <div class="stage-badge" id="badge-create">—</div>
+      </div>
+      <div class="stage-arrow">↓</div>
+      <div class="stage" data-stage="edit">
+        <div class="stage-icon">🎨</div>
+        <div class="stage-info">
+          <div class="stage-name">Edit</div>
+          <div class="stage-model">qwen2.5-coder:14b</div>
+        </div>
+        <div class="stage-badge" id="badge-edit">—</div>
+      </div>
+      <div class="stage-arrow">↓</div>
+      <div class="stage" data-stage="qc">
+        <div class="stage-icon">✅</div>
+        <div class="stage-info">
+          <div class="stage-name">Quality Check</div>
+          <div class="stage-model">deepseek-r1:32b</div>
+        </div>
+        <div class="stage-badge" id="badge-qc">—</div>
+      </div>
+      <div class="stage-arrow">↓</div>
+      <div class="stage stage-publish" data-stage="publish">
+        <div class="stage-icon">🚀</div>
+        <div class="stage-info">
+          <div class="stage-name">Publish Queue</div>
+          <div class="stage-model" id="queue-count">0 ready</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="section-title mt20">Recent Runs</h3>
+    <div class="run-list" id="run-list">
+      <div class="run-empty">No runs yet</div>
+    </div>
+  </aside>
+
+  <!-- ── Center: Chat ──────────────────────────────────────────────────────── -->
+  <main class="chat-panel">
+    <div class="agent-tabs" id="agent-tabs">
+      {% for key, agent in agents.items() %}
+      <button class="agent-tab {% if key == 'kali' %}active{% endif %}"
+              data-agent="{{ key }}"
+              onclick="switchAgent('{{ key }}')"
+              style="--agent-color: {{ agent.color }}">
+        <span class="tab-name">{{ agent.name }}</span>
+        <span class="tab-role">{{ agent.role }}</span>
+      </button>
+      {% endfor %}
+    </div>
+
+    <div class="chat-window" id="chat-window">
+      <div class="chat-welcome">
+        <div class="welcome-icon">🤖</div>
+        <h2>Chat with <span id="active-agent-name">Kali</span></h2>
+        <p>Type a message below to interact with your pipeline agents.<br/>
+           <span class="hint">Try: "status", "run pipeline ebook", "health", "help"</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-status" id="chat-status"></div>
+      <div class="input-row">
+        <textarea id="chat-input"
+                  placeholder="Message Kali..."
+                  rows="1"
+                  onkeydown="handleKey(event)"></textarea>
+        <button class="btn-send" id="btn-send" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Right: Products & Stats ──────────────────────────────────────────── -->
+  <aside class="sidebar-right">
+    <h3 class="section-title">QC Summary</h3>
+    <div class="qc-summary" id="qc-summary">
+      <div class="qc-stat pass"><span class="qc-num" id="qc-pass">0</span><span>PASS</span></div>
+      <div class="qc-stat revise"><span class="qc-num" id="qc-revise">0</span><span>REVISE</span></div>
+      <div class="qc-stat reject"><span class="qc-num" id="qc-reject">0</span><span>REJECT</span></div>
+    </div>
+
+    <h3 class="section-title mt20">Products</h3>
+    <div class="filter-row">
+      <button class="filter-btn active" onclick="filterProducts(this,'')">All</button>
+      <button class="filter-btn" onclick="filterProducts(this,'draft')">Draft</button>
+      <button class="filter-btn" onclick="filterProducts(this,'ready')">Ready</button>
+      <button class="filter-btn" onclick="filterProducts(this,'published')">Live</button>
+    </div>
+    <div class="product-list" id="product-list">
+      <div class="product-empty">No products yet</div>
+    </div>
+  </aside>
+</div>
+
+<!-- ── Toast ──────────────────────────────────────────────────────────────────── -->
+<div class="toast" id="toast"></div>
+
+<script src="/static/js/dashboard.js"></script>
+</body>
+</html>
